@@ -210,25 +210,30 @@ sub read_track_markers {
 }
 
 sub interpret_track_marker {
+    # Help from https://github.com/liesen/CueMeister/blob/master/src/mixmeister/mmp/Marker.java
     my %type_marker_is = (
     # Have to convert to string because of hash stringification
         '00000001'  => "Intro mk",
         '00000002'  => "Outro mk",
         '00000004'  => "Beat  mk",
-        '00000010'  => "Vol in 1",
-        '00000020'  => "Vol in 2",
-        '00000040'  => "Vol in 3",
-        '00000200'  => "Vol out4",
-        '00000400'  => "Vol out5",
+        '00000010'  => "Vol frst",
+        '00000020'  => "Vol in 1",
+        '00000040'  => "Vol in 2",
+        '00000200'  => "Vol out1",
+        '00000400'  => "Vol out2",
         '00000800'  => "Volume??",
-        '00001000'  => "Vol out6",
+        '00001000'  => "Vol last",
+        '00008000'  => "Vol User",
         '00010000'  => "TrebledB",
         '00040000'  => "Bass  dB",
         '00100000'  => "BPM in 1",
         '00200000'  => "BPM in 2",
         '00400000'  => "BPM out3",
         '00800000'  => "BPM out4",
-        '04000000'  => "Label   "
+        '01000000'  => "BPM User",
+        '04000000'  => "Label   ",
+        '08000000'  => "LablUser",
+        '10000000'  => "Measure ",
     );
     my ($type, $val) = @_;
     my $type_lu = sprintf('%08x', $type);
@@ -237,7 +242,7 @@ sub interpret_track_marker {
     # Val at this stage is a signed integer - needs to be floating point.
     $val = $val + 0.0;
     # Now do scale conversions if necessary
-    if ($type & 0x00051E70) {
+    if ($type & 0x00059E70) {
         # Volume marker of some sort - convert milliBels to deciBels
         $val /= 100;
         $val_format = '%+06.2f dB ';

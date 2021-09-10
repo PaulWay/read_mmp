@@ -13,8 +13,11 @@ GetOptions(
     'show-track-marker-debug|stmd'  => \$show_track_marker_debug,
 );
 
+my %mix_type = (1 => "Standard mix", 2 => "Beat mix");
+
 my $filename = shift;
 my $track_no = 0;
+my @tracks = ();
 
 open my $fh, '<', $filename or die "Could not open file: $!";
 my ( $riff1 ) = File::Format::RIFF->read( $fh );
@@ -40,6 +43,8 @@ foreach my $chunk ($riff1->data) {
         }
     }
 }
+print "*** Finishing up ***\n";
+print "Tracks: @tracks\n";
 
 sub hexprint {
     my ($data) = @_;
@@ -102,8 +107,8 @@ sub read_track {
     print "New track: $track_no\n";
     my ($track) = @_;
     my %track;
+    my ($name);
     my ($trk_type, $mix_type, $start_1, $start_2, $end, $markers, $bpm, $key_adj, $beat_blend);
-    my %mix_type = (1 => "Standard mix", 2 => "Beat mix");
     foreach my $item ($track->data) {
         my $itemid = $item->id;
         if ($itemid eq 'LIST') {
@@ -134,18 +139,22 @@ sub read_track {
             # Position 10 is key adjustment up/down
             if (scalar(@data) > 10) {
                 $key_adj = ($data[10] + 0.0) / 100;
+            } else {
+                $key_adj = 0.0;
             }
             # Position 11 is beat blend type (?)
             if (scalar(@data) > 11) {
                 $beat_blend = $data[11];
+            } else {
+                $beat_blend = 0;
             }
         } elsif ($itemid eq 'TRKF') {
-            my $name = $item->data;
+            $name = $item->data;
             from_to($name, 'UTF16-le', 'UTF8');
             $name =~ tr{\0}{}d;
             print "File name: $name\n";
         } elsif ($itemid eq 'TRKS') {
-#            print 'Track TRKS: ', hexprint($item->data), "\n";
+            print 'Track TRKS: ', hexprint($item->data), "\n";
 #            # TRKS: 2000 0000 0100 0000 0a9b 7f05 0000 0000 f8fc 4a23 0000 0000 0a9b 7f05 0000 0000
 #            my ($d0, $type_no);
 #            ($d0, $type_no, $start_1, $end, $start_2) = unpack("llqqq", $item->data);
@@ -159,16 +168,24 @@ sub read_track {
             my $href = process_TRKS($item->data);
             ($trk_type, $start_1, $end, $start_2) = @{ $href }{qw{ type start_1 end start_2 }};
         } elsif ($itemid eq 'TRKM') {
-            # We ignore them here, since we read them in read_track_markers()
+# We ignore them here, since we read them in read_track_markers()
         } else {
             print "Track data: got unknown id '$itemid':", hexprint($item->data), "\n";
         }
     }
-    #print "File name: $track{'filename'}\n";
+#print "File name: $track{'filename'}\n";
     printf "Track type: %s, %s - %03.2f BPM\n", $mix_type, $trk_type, $bpm;
     printf "*** Track start: %s or %s\n", string_time($start_1), string_time($start_2);
-    read_track_markers($markers);
+    my $marker_data = read_track_markers($markers);
     printf "*** Track end: %s\n", string_time($end);
+
+    push @tracks, {
+        "order" => $track_no,
+        "name" => $name,
+        "start" => $start_1,
+        "end" => $end,
+        "markers" => $marker_data,
+    }
 }
 
 sub compare_markers {
@@ -204,9 +221,12 @@ sub read_track_markers {
     foreach my $sublist (@sublists) {
         print "Sublist: ", $sublist->id, ": ", hexprint($sublist->data), "\n";
     }
+    my @marker_data;
     foreach my $marker (sort compare_markers @markers) {
-        read_track_marker($marker);
+        push @marker_data, read_track_marker($marker);
     }
+    print "Returned marker data @marker_data\n";
+    return \@marker_data;
 }
 
 sub interpret_track_marker {
@@ -262,13 +282,6 @@ sub read_track_marker {
     if ($marker->id eq 'TRKS') {
         print "TRKS block inside track markers!\n";
         print "TRKS data:", hexprint($marker->data), "\n";
-        my ($head, $type, $pos, $d, $placer, $val, $g, $h) = unpack("VVlVVlVV", $marker->data);
-        # my $trks = process_TRKS($marker);
-        # my ($trk_type, $start_1, $end, $start_2) = @{ $trks }{qw{ type start_1 end start_2 }};
-        # printf "Pos %16s: Track stop (%d, %d, %d) %s\n", string_time($start_1), $start_1, $start_2, $end, $trk_type;
-        my $placer_type = ($placer == 1 ? 'USER' : ($placer == 0 ? 'mixm' : "UNKNOWN PLACER"));
-        printf "Pos %16s: Type = %s (%d, %d, %d) %s\n", string_time($pos), interpret_track_marker($type, $val), $d, $g, $h, $placer_type;
-        return;
     }
     unless ($marker->id eq 'TRKM') {
         print "Track markers: Unknown id '", $marker->id, "': ", hexprint($marker->data), "\n";
@@ -276,8 +289,19 @@ sub read_track_marker {
     }
     my ($head, $type, $pos, $d, $placer, $val, $g, $h) = unpack("VVlVVlVV", $marker->data);
     print "Odd - track marker header is $head, not 0x20\n" unless $head == 0x20;
+    my $marker_type = interpret_track_marker($type, $val);
     my $placer_type = ($placer == 1 ? 'USER' : ($placer == 0 ? 'mixm' : "UNKNOWN PLACER"));
-    printf "Pos %16s: Type = %s (%d, %d, %d) %s\n", string_time($pos), interpret_track_marker($type, $val), $d, $g, $h, $placer_type;
+    printf "Pos %16s: Type = %s (%d, %d, %d) %s\n", string_time($pos), $marker_type, $d, $g, $h, $placer_type;
+    return {
+        "marker" => $marker->id,
+        "pos" => $pos,
+        "type" => $type,
+        "type_interp" => $marker_type,
+        "placer" => $placer_type,
+        "val1" => $d,
+        "val2" => $g,
+        "val3" => $h,
+    };
 }
 
 #my ( $riff2 ) = new File::Format::RIFF( 'TYPE' );
